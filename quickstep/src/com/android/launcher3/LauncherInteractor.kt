@@ -47,6 +47,8 @@ class LauncherInteractor(private val launcher: QuickstepLauncher, val executor: 
 
     @AnyThread fun getLauncherAsRecentViewContainer(): RecentsViewContainer = launcher
 
+    @AnyThread fun getQuickstepLauncher(): QuickstepLauncher = launcher
+
     @AnyThread
     fun startScalingWorkspaceRevealAnim(playAlphaReveal: Boolean = true, playBlur: Boolean = true) {
         executor.execute {

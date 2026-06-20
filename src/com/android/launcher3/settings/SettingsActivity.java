@@ -60,8 +60,7 @@ import com.android.launcher3.Flags;
 import com.android.launcher3.InvariantDeviceProfile;
 import com.android.launcher3.LauncherFiles;
 import com.android.launcher3.R;
-import com.android.launcher3.lineage.LineageUtils;
-import com.android.launcher3.lineage.trust.TrustAppsActivity;
+import com.android.launcher3.lineage.trust.TrustActivityIntents;
 import com.android.launcher3.states.RotationHelper;
 import com.android.launcher3.util.DisplayController;
 import com.android.launcher3.util.SettingsCache;
@@ -365,11 +364,7 @@ public class SettingsActivity extends FragmentActivity
                             launcherApps.isPackageEnabled(SEARCH_PACKAGE, myUserHandle());
                 case KEY_TRUST_APPS:
                     preference.setOnPreferenceClickListener(p -> {
-                        LineageUtils.showLockScreen(getActivity(),
-                                getString(R.string.trust_apps_manager_name), () -> {
-                            Intent intent = new Intent(getActivity(), TrustAppsActivity.class);
-                            startActivity(intent);
-                        });
+                        startActivity(TrustActivityIntents.trustAppsManager(getActivity()));
                         return true;
                     });
                     return true;

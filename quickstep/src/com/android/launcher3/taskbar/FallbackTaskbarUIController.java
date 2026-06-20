@@ -20,6 +20,7 @@ import static com.android.launcher3.taskbar.TaskbarStashController.FLAG_IN_APP;
 import static com.android.launcher3.taskbar.TaskbarStashController.FLAG_IN_STASHED_LAUNCHER_STATE;
 
 import android.animation.Animator;
+import android.app.Activity;
 
 import androidx.annotation.Nullable;
 
@@ -76,6 +77,11 @@ public class FallbackTaskbarUIController
 
     public FallbackTaskbarUIController(T recentsContainer) {
         mRecentsContainer = recentsContainer;
+    }
+
+    @Nullable
+    Activity getAuthHostActivity() {
+        return mRecentsContainer instanceof Activity ? (Activity) mRecentsContainer : null;
     }
 
     @Override

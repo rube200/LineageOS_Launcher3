@@ -56,6 +56,7 @@ import com.android.launcher3.dragndrop.DragOptions;
 import com.android.launcher3.dragndrop.DraggableView;
 import com.android.launcher3.graphics.DragPreviewProvider;
 import com.android.launcher3.icons.FastBitmapDrawable;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
 import com.android.launcher3.model.BgDataModel;
 import com.android.launcher3.model.StringCache;
 import com.android.launcher3.model.data.AppInfo;
@@ -67,7 +68,9 @@ import com.android.launcher3.popup.PopupContainerWithArrow;
 import com.android.launcher3.touch.ItemClickHandler.ItemClickProxy;
 import com.android.launcher3.util.PackageUserKey;
 import com.android.launcher3.util.Preconditions;
+import com.android.launcher3.util.RunnableList;
 import com.android.launcher3.util.Themes;
+import com.android.launcher3.views.ActivityContext;
 import com.android.launcher3.views.BaseDragLayer;
 
 import java.util.Map;
@@ -325,6 +328,17 @@ public class SecondaryDisplayLauncher extends BaseActivity
     @Override
     public View.OnLongClickListener getAllAppsItemLongClickListener() {
         return v -> mDragLayer.onIconLongClicked(v);
+    }
+
+    @Override
+    public RunnableList startActivitySafely(View v, Intent intent, ItemInfo item) {
+        return TrustLaunchHelper.startActivitySafelyWithProtectedGate(
+                this, this, getString(R.string.trust_apps_manager_name), v, intent, item,
+                this::startActivitySafelyUnchecked);
+    }
+
+    private RunnableList startActivitySafelyUnchecked(View v, Intent intent, ItemInfo item) {
+        return super.startActivitySafely(v, intent, item);
     }
 
     private void onIconClicked(View v) {

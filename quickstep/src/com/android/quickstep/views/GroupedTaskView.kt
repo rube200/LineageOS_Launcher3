@@ -15,6 +15,7 @@
  */
 package com.android.quickstep.views
 
+import android.app.Activity
 import android.app.ActivityTaskManager.INVALID_TASK_ID
 import android.content.Context
 import android.graphics.PointF
@@ -29,6 +30,7 @@ import com.android.launcher3.Flags.enableRefactorTaskThumbnail
 import com.android.launcher3.Flags.showCloseButtonOnTaskviewHover
 import com.android.launcher3.R
 import com.android.launcher3.Utilities
+import com.android.launcher3.lineage.trust.TrustLaunchHelper
 import com.android.launcher3.util.OverviewReleaseFlags.enableOverviewIconMenu
 import com.android.launcher3.util.RunnableList
 import com.android.launcher3.util.SplitConfigurationOptions.STAGE_POSITION_BOTTOM_OR_RIGHT
@@ -336,21 +338,35 @@ class GroupedTaskView @JvmOverloads constructor(context: Context, attrs: Attribu
         launchingExistingTaskView: Boolean,
         callback: (launched: Boolean) -> Unit,
     ) {
-        recentsView?.let {
-            it.splitSelectController.launchExistingSplitPair(
-                if (launchingExistingTaskView) this else null,
-                leftTopTaskContainer.task.key.id,
-                rightBottomTaskContainer.task.key.id,
-                STAGE_POSITION_TOP_OR_LEFT,
-                callback,
-                isQuickSwitch,
-                snapPosition,
-            )
-            Log.d(
-                TAG,
-                "launchTaskInternal - launchExistingSplitPair: ${taskIds.contentToString()}, launchingExistingTaskView: $launchingExistingTaskView",
-            )
+        runWithProtectedAuthForTasks {
+            recentsView?.let {
+                it.splitSelectController.launchExistingSplitPair(
+                    if (launchingExistingTaskView) this else null,
+                    leftTopTaskContainer.task.key.id,
+                    rightBottomTaskContainer.task.key.id,
+                    STAGE_POSITION_TOP_OR_LEFT,
+                    callback,
+                    isQuickSwitch,
+                    snapPosition,
+                )
+                Log.d(
+                    TAG,
+                    "launchTaskInternal - launchExistingSplitPair: ${taskIds.contentToString()}, launchingExistingTaskView: $launchingExistingTaskView",
+                )
+            }
         }
+    }
+
+    private fun runWithProtectedAuthForTasks(launch: Runnable) {
+        val activityHost = container as? Activity
+        TrustLaunchHelper.runWithProtectedAuthForAnyTaskKey(
+            context,
+            activityHost,
+            context.getString(R.string.trust_apps_manager_name),
+            launch,
+            leftTopTaskContainer.task.key,
+            rightBottomTaskContainer.task.key,
+        )
     }
 
     /**

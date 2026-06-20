@@ -30,10 +30,12 @@ import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCH
 
 import android.graphics.PointF;
 import android.graphics.Rect;
+import android.os.SystemClock;
 import android.view.GestureDetector;
 import android.view.HapticFeedbackConstants;
 import android.view.InputDevice;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.View.OnTouchListener;
 import android.view.ViewConfiguration;
@@ -45,6 +47,7 @@ import com.android.launcher3.Launcher;
 import com.android.launcher3.LauncherPrefs;
 import com.android.launcher3.Workspace;
 import com.android.launcher3.dragndrop.DragLayer;
+import com.android.launcher3.lineage.trust.TrustActivityIntents;
 import com.android.launcher3.logger.LauncherAtom;
 import com.android.launcher3.testing.TestLogging;
 import com.android.launcher3.testing.shared.TestProtocol;
@@ -67,6 +70,15 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
     private static final int STATE_PENDING_PARENT_INFORM = 2;
     private static final int STATE_COMPLETED = 3;
 
+    /**
+     * Cumulative scale factor required to open hidden apps (pinch out).
+     */
+    private static final float PINCH_OUT_SCALE_THRESHOLD = 1.65f;
+    /**
+     * Wide spread must finish within this window (fast pinch, not a slow drag).
+     */
+    private static final long PINCH_MAX_DURATION_MS = 600;
+
     private final Rect mTempRect = new Rect();
     private final Launcher mLauncher;
     private final Workspace<?> mWorkspace;
@@ -76,6 +88,10 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
     private int mLongPressState = STATE_CANCELLED;
 
     private final GestureDetector mGestureDetector;
+    private final ScaleGestureDetector mScaleGestureDetector;
+    private float mPinchScale = 1f;
+    private long mPinchStartTime;
+    private boolean mPinchHandled;
 
     public WorkspaceTouchListener(Launcher launcher, Workspace<?> workspace) {
         mLauncher = launcher;
@@ -84,11 +100,43 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
         // likely to cause movement.
         mTouchSlop = 2 * ViewConfiguration.get(launcher).getScaledTouchSlop();
         mGestureDetector = new GestureDetector(workspace.getContext(), this);
+        mScaleGestureDetector = new ScaleGestureDetector(workspace.getContext(),
+                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    @Override
+                    public boolean onScaleBegin(ScaleGestureDetector detector) {
+                        if (!canOpenHiddenDrawerGesture()) {
+                            return false;
+                        }
+                        mPinchScale = 1f;
+                        mPinchHandled = false;
+                        mPinchStartTime = SystemClock.uptimeMillis();
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onScale(ScaleGestureDetector detector) {
+                        mPinchScale *= detector.getScaleFactor();
+                        final long elapsed = SystemClock.uptimeMillis() - mPinchStartTime;
+                        if (!mPinchHandled
+                                && mPinchScale >= PINCH_OUT_SCALE_THRESHOLD
+                                && elapsed <= PINCH_MAX_DURATION_MS) {
+                            mPinchHandled = true;
+                            openHiddenAppsDrawer();
+                        }
+                        return true;
+                    }
+                });
     }
 
     @Override
     public boolean onTouch(View view, MotionEvent ev) {
         mGestureDetector.onTouchEvent(ev);
+        if (ev.getPointerCount() >= 2) {
+            mScaleGestureDetector.onTouchEvent(ev);
+        } else if (ev.getActionMasked() == ACTION_UP || ev.getActionMasked() == ACTION_CANCEL) {
+            mPinchScale = 1f;
+            mPinchHandled = false;
+        }
 
         int action = ev.getActionMasked();
         if (action == ACTION_DOWN) {
@@ -188,6 +236,15 @@ public class WorkspaceTouchListener extends GestureDetector.SimpleOnGestureListe
     private boolean canHandleLongPress() {
         return AbstractFloatingView.getTopOpenView(mLauncher) == null
                 && mLauncher.isInState(NORMAL);
+    }
+
+    private boolean canOpenHiddenDrawerGesture() {
+        return LauncherPrefs.HIDDEN_DRAWER_GESTURE.get(mWorkspace.getContext())
+                && canHandleLongPress();
+    }
+
+    private void openHiddenAppsDrawer() {
+        mLauncher.startActivity(TrustActivityIntents.hiddenAppsDrawer(mLauncher));
     }
 
     private void cancelLongPress() {

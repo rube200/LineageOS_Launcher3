@@ -49,6 +49,7 @@ import com.android.launcher3.LauncherState;
 import com.android.launcher3.LauncherUiState;
 import com.android.launcher3.LauncherUiStateUtil;
 import com.android.launcher3.Utilities;
+import com.android.launcher3.uioverrides.QuickstepLauncher;
 import com.android.launcher3.anim.AnimatedFloat;
 import com.android.launcher3.logging.InstanceId;
 import com.android.launcher3.logging.InstanceIdSequence;
@@ -132,6 +133,13 @@ public class LauncherTaskbarUIController extends TaskbarUIController {
         mLauncherUiState = launcherUiState;
         mHomeState = homeState;
         mTaskbarExecutor = enableTaskbarUiThread() ? TASKBAR_UI_THREAD : Runnable::run;
+    }
+
+    /**
+     * Activity host for protected-app auth when launching from the taskbar.
+     */
+    public QuickstepLauncher getAuthHostLauncher() {
+        return mLauncher.getQuickstepLauncher();
     }
 
     @Override

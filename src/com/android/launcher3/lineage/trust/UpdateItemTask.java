@@ -40,7 +40,7 @@ public class UpdateItemTask extends AsyncTask<TrustComponent, Void, Boolean> {
 
     @Override
     protected Boolean doInBackground(TrustComponent... trustComponents) {
-        if (trustComponents.length < 1) {
+        if (isCancelled() || trustComponents.length < 1) {
             return false;
         }
 
@@ -49,26 +49,23 @@ public class UpdateItemTask extends AsyncTask<TrustComponent, Void, Boolean> {
 
         switch (mKind) {
             case HIDDEN:
-                if (component.isHidden()) {
-                    mDbHelper.addHiddenApp(pkgName);
-                } else {
-                    mDbHelper.removeHiddenApp(pkgName);
-                }
-                break;
+                return component.isHidden()
+                        ? mDbHelper.addHiddenApp(pkgName)
+                        : mDbHelper.removeHiddenApp(pkgName);
             case PROTECTED:
-                if (component.isProtected()) {
-                    mDbHelper.addProtectedApp(pkgName);
-                } else {
-                    mDbHelper.removeProtectedApp(pkgName);
-                }
-                break;
+                return component.isProtected()
+                        ? mDbHelper.addProtectedApp(pkgName)
+                        : mDbHelper.removeProtectedApp(pkgName);
+            default:
+                return false;
         }
-        return true;
     }
 
     @Override
     protected void onPostExecute(Boolean result) {
-        mCallback.onUpdated(result);
+        if (!isCancelled()) {
+            mCallback.onUpdated(result);
+        }
     }
 
     interface UpdateCallback {

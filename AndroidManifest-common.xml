@@ -185,6 +185,20 @@
             android:name="com.android.launcher3.lineage.trust.TrustAppsActivity"
             android:label="@string/trust_apps_manager_name"
             android:theme="@android:style/Theme.DeviceDefault.Settings"
-            android:autoRemoveFromRecents="true" />
+            android:taskAffinity="com.android.launcher3.lineage.trust"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="false" />
+
+        <activity
+            android:name="com.android.launcher3.lineage.trust.HiddenAppsDrawerActivity"
+            android:label="@string/hidden_apps_drawer_title"
+            android:theme="@android:style/Theme.DeviceDefault.Settings"
+            android:taskAffinity="com.android.launcher3.lineage.trust"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="false" />
     </application>
 </manifest>
