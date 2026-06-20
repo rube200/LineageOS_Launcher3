@@ -130,6 +130,7 @@ import com.android.launcher3.LauncherState;
 import com.android.launcher3.QuickstepAccessibilityDelegate;
 import com.android.launcher3.QuickstepTransitionManager;
 import com.android.launcher3.R;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.Workspace;
 import com.android.launcher3.accessibility.LauncherAccessibilityDelegate;
@@ -137,6 +138,7 @@ import com.android.launcher3.allapps.AllAppsRecyclerView;
 import com.android.launcher3.anim.AnimatorPlaybackController;
 import com.android.launcher3.anim.PendingAnimation;
 import com.android.launcher3.apppairs.AppPairIcon;
+import com.android.launcher3.model.data.AppPairInfo;
 import com.android.launcher3.appprediction.PredictionRowView;
 import com.android.launcher3.config.FeatureFlags;
 import com.android.launcher3.desktop.DesktopRecentsTransitionController;
@@ -1151,33 +1153,68 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
     @Override
     public void startIntentSenderForResult(IntentSender intent, int requestCode,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options) {
-        if (requestCode != -1) {
-            mPendingActivityRequestCode = requestCode;
-            StartActivityParams params = new StartActivityParams(this, requestCode);
-            params.intentSender = intent;
-            params.fillInIntent = fillInIntent;
-            params.flagsMask = flagsMask;
-            params.flagsValues = flagsValues;
-            params.extraFlags = extraFlags;
-            params.options = options;
-            startActivity(ProxyActivityStarter.getLaunchIntent(this, params));
-        } else {
-            super.startIntentSenderForResult(intent, requestCode, fillInIntent, flagsMask,
-                    flagsValues, extraFlags, options);
+        if (TrustLaunchHelper.isProtectedLaunch(this, null, fillInIntent)) {
+            TrustLaunchHelper.authThenRun(this, this,
+                    TrustLaunchHelper.getProtectedLaunchAuthTitle(this, fillInIntent,
+                            getString(R.string.trust_apps_manager_name)),
+                    () -> startIntentSenderForResultInternal(intent, requestCode, fillInIntent,
+                            flagsMask, flagsValues, extraFlags, options));
+            return;
         }
+        startIntentSenderForResultInternal(intent, requestCode, fillInIntent, flagsMask,
+                flagsValues, extraFlags, options);
+    }
+
+    private void startIntentSenderForResultInternal(IntentSender intent, int requestCode,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options) {
+        if (requestCode != -1) {
+            startIntentSenderForResultViaProxy(intent, requestCode, fillInIntent, flagsMask,
+                    flagsValues, extraFlags, options);
+        } else {
+            performStartIntentSenderForResultInternal(intent, requestCode, fillInIntent,
+                    flagsMask, flagsValues, extraFlags, options);
+        }
+    }
+
+    private void startIntentSenderForResultViaProxy(IntentSender intent, int requestCode,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options) {
+        mPendingActivityRequestCode = requestCode;
+        StartActivityParams params = new StartActivityParams(this, requestCode);
+        params.intentSender = intent;
+        params.fillInIntent = fillInIntent;
+        params.flagsMask = flagsMask;
+        params.flagsValues = flagsValues;
+        params.extraFlags = extraFlags;
+        params.options = options;
+        startActivity(ProxyActivityStarter.getLaunchIntent(this, params));
     }
 
     @Override
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
-        if (requestCode != -1) {
-            mPendingActivityRequestCode = requestCode;
-            StartActivityParams params = new StartActivityParams(this, requestCode);
-            params.intent = intent;
-            params.options = options;
-            startActivity(ProxyActivityStarter.getLaunchIntent(this, params));
-        } else {
-            super.startActivityForResult(intent, requestCode, options);
+        if (TrustLaunchHelper.isProtectedLaunch(this, null, intent)) {
+            TrustLaunchHelper.authThenRun(this, this,
+                    TrustLaunchHelper.getProtectedLaunchAuthTitle(this, intent,
+                            getString(R.string.trust_apps_manager_name)),
+                    () -> startActivityForResultInternal(intent, requestCode, options));
+            return;
         }
+        startActivityForResultInternal(intent, requestCode, options);
+    }
+
+    private void startActivityForResultInternal(Intent intent, int requestCode, Bundle options) {
+        if (requestCode != -1) {
+            startActivityForResultViaProxy(intent, requestCode, options);
+        } else {
+            performStartActivityForResultInternal(intent, requestCode, options);
+        }
+    }
+
+    private void startActivityForResultViaProxy(Intent intent, int requestCode, Bundle options) {
+        mPendingActivityRequestCode = requestCode;
+        StartActivityParams params = new StartActivityParams(this, requestCode);
+        params.intent = intent;
+        params.options = options;
+        startActivity(ProxyActivityStarter.getLaunchIntent(this, params));
     }
 
     @Override
@@ -1531,7 +1568,8 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
      */
     public void launchSplitTasks(
             @NonNull SplitTask splitTask, @Nullable RemoteTransition remoteTransition) {
-        mSplitSelectStateController.launchExistingSplitPair(null /* launchingTaskView */,
+        Runnable launch = () -> mSplitSelectStateController.launchExistingSplitPair(
+                null /* launchingTaskView */,
                 splitTask.getTopLeftTask().key.id,
                 splitTask.getBottomRightTask().key.id,
                 SplitConfigurationOptions.STAGE_POSITION_TOP_OR_LEFT,
@@ -1541,20 +1579,27 @@ public class QuickstepLauncher extends Launcher implements RecentsViewContainer,
                         ? SNAP_TO_2_50_50
                         : splitTask.getSplitBounds().snapPosition,
                 remoteTransition);
+        TrustLaunchHelper.runWithProtectedAuthForAnyTaskKey(this, this,
+                getString(R.string.trust_apps_manager_name), launch,
+                splitTask.getTopLeftTask().key, splitTask.getBottomRightTask().key);
     }
 
     /**
      * Launches two apps as an app pair.
      */
     public void launchAppPair(AppPairIcon appPairIcon) {
-        // Potentially show the Taskbar education once the app pair launch finishes
-        mSplitSelectStateController.getAppPairsController().launchAppPair(appPairIcon,
+        AppPairInfo info = appPairIcon.getInfo();
+        List<ItemInfo> items = List.of(info.getFirstApp(), info.getSecondApp());
+        Runnable launch = () -> mSplitSelectStateController.getAppPairsController().launchAppPair(
+                appPairIcon,
                 CUJ_LAUNCHER_LAUNCH_APP_PAIR_FROM_WORKSPACE,
                 (success) -> {
                     if (success && mTaskbarInteractor != null) {
                         mTaskbarInteractor.showEduOnAppLaunch();
                     }
                 });
+        TrustLaunchHelper.runWithProtectedAuthForAny(this, this,
+                getString(R.string.trust_apps_manager_name), items, launch);
     }
 
     @Override

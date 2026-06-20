@@ -22,7 +22,11 @@ import android.app.ActionBar;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
+import android.content.pm.LauncherActivityInfo;
+import android.content.pm.LauncherApps;
 import android.os.Bundle;
+import android.os.Process;
+import android.os.UserHandle;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
@@ -57,6 +61,8 @@ public class TrustAppsActivity extends Activity implements
         UpdateItemTask.UpdateCallback {
 
     private static final String KEY_TRUST_ONBOARDING = "pref_trust_onboarding";
+    private static final String KEY_PROTECTED_INACTIVE_WARNING = "pref_protected_inactive_warning";
+    private static final String STATE_AUTHENTICATED = "state_trust_authenticated";
 
     private RecyclerView mRecyclerView;
     private LinearLayout mLoadingView;
@@ -64,11 +70,76 @@ public class TrustAppsActivity extends Activity implements
 
     private TrustDatabaseHelper mDbHelper;
     private TrustAppsAdapter mAdapter;
+    private AppFilter mAppFilter;
+
+    @Nullable
+    private LoadTrustComponentsTask mLoadTask;
+    @Nullable
+    private UpdateItemTask mUpdateTask;
+
+    private boolean mAuthenticated;
+    private boolean mPendingAuth;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstance) {
         super.onCreate(savedInstance);
+        TrustActivityIntents.applySecureWindow(this);
+        mAuthenticated = savedInstance != null
+                && savedInstance.getBoolean(STATE_AUTHENTICATED, false);
+    }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (!mAuthenticated && !mPendingAuth) {
+            requestAuthentication();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mLoadTask != null) {
+            mLoadTask.cancel(true);
+            mLoadTask = null;
+        }
+        if (mUpdateTask != null) {
+            mUpdateTask.cancel(true);
+            mUpdateTask = null;
+        }
+        super.onDestroy();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (!isChangingConfigurations()) {
+            mAuthenticated = false;
+        }
+    }
+
+    @Override
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean(STATE_AUTHENTICATED, mAuthenticated);
+    }
+
+    private void requestAuthentication() {
+        mPendingAuth = true;
+        LineageUtils.showLockScreen(this, this, getString(R.string.trust_apps_auth_manager),
+                () -> {
+                    mPendingAuth = false;
+                    mAuthenticated = true;
+                    if (mRecyclerView == null) {
+                        initializeContent();
+                    }
+                },
+                () -> {
+                    mPendingAuth = false;
+                    finish();
+                });
+    }
+
+    private void initializeContent() {
         ActionBar actionBar = getActionBar();
         if (actionBar != null) {
             actionBar.setDisplayHomeAsUpEnabled(true);
@@ -84,6 +155,7 @@ public class TrustAppsActivity extends Activity implements
         final boolean hasSecureKeyguard = LineageUtils.hasSecureKeyguard(this);
         mAdapter = new TrustAppsAdapter(this, hasSecureKeyguard);
         mDbHelper = TrustDatabaseHelper.getInstance(this);
+        mAppFilter = new AppFilter(this);
 
         mRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         mRecyclerView.setItemAnimator(new DefaultItemAnimator());
@@ -91,8 +163,9 @@ public class TrustAppsActivity extends Activity implements
 
         showOnBoarding(false);
 
-        final AppFilter appFilter = new AppFilter(this);
-        new LoadTrustComponentsTask(mDbHelper, getPackageManager(), appFilter, this).execute();
+        mLoadTask = new LoadTrustComponentsTask(this, mDbHelper, getPackageManager(), mAppFilter,
+                this);
+        mLoadTask.execute();
     }
 
     @Override
@@ -118,29 +191,101 @@ public class TrustAppsActivity extends Activity implements
 
     @Override
     public void onHiddenItemChanged(@NonNull TrustComponent component) {
-        new UpdateItemTask(mDbHelper, this, HIDDEN).execute(component);
+        startUpdateTask(HIDDEN, component);
     }
 
     @Override
     public void onProtectedItemChanged(@NonNull TrustComponent component) {
-        new UpdateItemTask(mDbHelper, this, PROTECTED).execute(component);
+        startUpdateTask(PROTECTED, component);
+    }
+
+    private void startUpdateTask(@NonNull TrustComponent.Kind kind,
+            @NonNull TrustComponent component) {
+        if (mUpdateTask != null) {
+            mUpdateTask.cancel(true);
+        }
+        mUpdateTask = new UpdateItemTask(mDbHelper, this, kind);
+        mUpdateTask.execute(component);
+    }
+
+    @Override
+    public void onAppClicked(@NonNull TrustComponent component) {
+        TrustLaunchHelper.runWithProtectedAuth(this, this,
+                getString(R.string.trust_apps_manager_name),
+                component.getPackageName(), () -> launchApp(component.getPackageName()));
+    }
+
+    private void launchApp(@NonNull String packageName) {
+        LauncherApps launcherApps = getSystemService(LauncherApps.class);
+        if (launcherApps == null) {
+            return;
+        }
+        try {
+            UserHandle currentUser = Process.myUserHandle();
+            List<LauncherActivityInfo> activities =
+                    launcherApps.getActivityList(packageName, currentUser);
+            if (!activities.isEmpty()) {
+                launcherApps.startMainActivity(
+                        activities.get(0).getComponentName(), currentUser, null, null);
+                return;
+            }
+            for (UserHandle user : launcherApps.getProfiles()) {
+                if (user.equals(currentUser)) {
+                    continue;
+                }
+                activities = launcherApps.getActivityList(packageName, user);
+                if (!activities.isEmpty()) {
+                    launcherApps.startMainActivity(
+                            activities.get(0).getComponentName(), user, null, null);
+                    return;
+                }
+            }
+            Toast.makeText(this, R.string.activity_not_found, Toast.LENGTH_SHORT).show();
+        } catch (SecurityException e) {
+            Toast.makeText(this, R.string.activity_not_found, Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
     public void onUpdated(boolean result) {
+        if (!result) {
+            Toast.makeText(this, R.string.trust_apps_update_failed, Toast.LENGTH_SHORT).show();
+            reloadTrustList();
+        }
         LauncherAppState.INSTANCE.get(this).getModel().reloadIfActive();
+    }
+
+    private void reloadTrustList() {
+        if (mLoadTask != null) {
+            mLoadTask.cancel(true);
+        }
+        if (mAppFilter == null || mDbHelper == null) {
+            return;
+        }
+        mLoadingView.setVisibility(View.VISIBLE);
+        mRecyclerView.setVisibility(View.GONE);
+        mLoadTask = new LoadTrustComponentsTask(this, mDbHelper, getPackageManager(), mAppFilter,
+                this);
+        mLoadTask.execute();
     }
 
     @Override
     public void onLoadListProgress(int progress) {
+        if (isFinishing() || mProgressBar == null) {
+            return;
+        }
         mProgressBar.setProgress(progress);
     }
 
     @Override
     public void onLoadCompleted(List<TrustComponent> result) {
+        if (isFinishing() || mLoadingView == null || mRecyclerView == null || mAdapter == null) {
+            return;
+        }
         mLoadingView.setVisibility(View.GONE);
         mRecyclerView.setVisibility(View.VISIBLE);
         mAdapter.update(result);
+        maybeShowProtectedInactiveWarning();
     }
 
     private void setupEdgeToEdge() {
@@ -169,6 +314,22 @@ public class TrustAppsActivity extends Activity implements
 
         new AlertDialog.Builder(this)
                 .setView(R.layout.dialog_trust_welcome)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
+    /** Informs the user that protected apps are inactive without a device lock screen. */
+    private void maybeShowProtectedInactiveWarning() {
+        if (LineageUtils.hasSecureKeyguard(this) || !mDbHelper.hasAnyProtectedApp()) {
+            return;
+        }
+        SharedPreferences prefs = LauncherPrefs.getPrefs(this);
+        if (prefs.getBoolean(KEY_PROTECTED_INACTIVE_WARNING, false)) {
+            return;
+        }
+        prefs.edit().putBoolean(KEY_PROTECTED_INACTIVE_WARNING, true).apply();
+        new AlertDialog.Builder(this)
+                .setMessage(R.string.launcher_lock_remove_warning)
                 .setPositiveButton(android.R.string.ok, null)
                 .show();
     }

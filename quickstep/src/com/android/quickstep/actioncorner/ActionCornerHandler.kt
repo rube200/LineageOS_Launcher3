@@ -21,8 +21,10 @@ import android.content.Context
 import android.view.Display.DEFAULT_DISPLAY
 import android.window.SplashScreen
 import com.android.launcher3.Flags.enableReversibleHomeActionCorner
+import com.android.launcher3.R
 import com.android.launcher3.concurrent.annotations.LightweightBackground
 import com.android.launcher3.dagger.ApplicationContext
+import com.android.launcher3.lineage.trust.TrustLaunchHelper
 import com.android.launcher3.util.ActivityOptionsWrapper
 import com.android.launcher3.util.RunnableList
 import com.android.launcher3.util.SplitConfigurationOptions
@@ -171,26 +173,43 @@ constructor(
 
     private fun launchGroupTask(task: GroupTask, displayId: Int) {
         when (task) {
-            is SingleTask ->
-                executor.execute {
-                    val activityOptions: ActivityOptions =
-                        makeDefaultActivityOptions(displayId) ?: return@execute
-                    activityManagerWrapper.startActivityFromRecents(
-                        task.task.key.id,
-                        activityOptions,
-                    )
+            is SingleTask -> {
+                TrustLaunchHelper.runWithProtectedAuthForTask(
+                    context,
+                    getRecentsViewContainer(displayId) as? android.app.Activity,
+                    context.getString(R.string.trust_apps_manager_name),
+                    task.task.key,
+                ) {
+                    executor.execute {
+                        val activityOptions: ActivityOptions =
+                            makeDefaultActivityOptions(displayId) ?: return@execute
+                        activityManagerWrapper.startActivityFromRecents(
+                            task.task.key.id,
+                            activityOptions,
+                        )
+                    }
                 }
+            }
             is SplitTask -> {
-                val splitSelectStateController =
-                    getRecentsViewContainer(displayId)?.splitSelectStateController
-                splitSelectStateController?.launchExistingSplitPair(
-                    /* groupedTaskView= */ null,
-                    task.topLeftTask.key.id,
-                    task.bottomRightTask.key.id,
-                    SplitConfigurationOptions.STAGE_POSITION_TOP_OR_LEFT,
-                    /* callback= */ { splitSelectStateController.resetState() },
-                    /* freezeTaskList= */ false,
-                    task.splitBounds?.snapPosition ?: SplitScreenConstants.SNAP_TO_2_50_50,
+                val container = getRecentsViewContainer(displayId)
+                val splitSelectStateController = container?.splitSelectStateController
+                TrustLaunchHelper.runWithProtectedAuthForAnyTaskKey(
+                    context,
+                    container as? android.app.Activity,
+                    context.getString(R.string.trust_apps_manager_name),
+                    {
+                        splitSelectStateController?.launchExistingSplitPair(
+                            /* groupedTaskView= */ null,
+                            task.topLeftTask.key.id,
+                            task.bottomRightTask.key.id,
+                            SplitConfigurationOptions.STAGE_POSITION_TOP_OR_LEFT,
+                            /* callback= */ { splitSelectStateController.resetState() },
+                            /* freezeTaskList= */ false,
+                            task.splitBounds?.snapPosition ?: SplitScreenConstants.SNAP_TO_2_50_50,
+                        )
+                    },
+                    task.topLeftTask.key,
+                    task.bottomRightTask.key,
                 )
             }
         }

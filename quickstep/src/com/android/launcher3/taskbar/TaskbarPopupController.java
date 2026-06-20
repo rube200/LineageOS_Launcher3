@@ -42,6 +42,8 @@ import com.android.launcher3.AbstractFloatingView;
 import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.Flags;
 import com.android.launcher3.LauncherSettings;
+import com.android.launcher3.R;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
 import com.android.launcher3.model.data.AppInfo;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.model.data.WorkspaceItemInfo;
@@ -468,34 +470,39 @@ public class TaskbarPopupController implements TaskbarControllers.LoggableTaskba
              }
 
             // - Immediately launch split with the running app
-            Pair<InstanceId, com.android.launcher3.logging.InstanceId> instanceIds =
-                    LogUtils.getShellShareableInstanceId();
-            mTarget.getStatsLogManager().logger()
-                    .withItemInfo(mItemInfo)
-                    .withInstanceId(instanceIds.second)
-                    .log(getLogEventForPosition(getPosition().stagePosition));
+            Runnable launchSplit = () -> {
+                Pair<InstanceId, com.android.launcher3.logging.InstanceId> instanceIds =
+                        LogUtils.getShellShareableInstanceId();
+                mTarget.getStatsLogManager().logger()
+                        .withItemInfo(mItemInfo)
+                        .withInstanceId(instanceIds.second)
+                        .log(getLogEventForPosition(getPosition().stagePosition));
 
-            if (mItemInfo.itemType == LauncherSettings.Favorites.ITEM_TYPE_DEEP_SHORTCUT) {
-                WorkspaceItemInfo workspaceItemInfo = (WorkspaceItemInfo) mItemInfo;
-                SystemUiProxy.INSTANCE.get(mTarget).startShortcut(
-                        workspaceItemInfo.getIntent().getPackage(),
-                        workspaceItemInfo.getDeepShortcutId(),
-                        getPosition().stagePosition,
-                        null,
-                        workspaceItemInfo.user,
-                        instanceIds.first);
-            } else {
-                SystemUiProxy.INSTANCE.get(mTarget).startIntent(
-                        mTarget.getSystemService(LauncherApps.class).getMainActivityLaunchIntent(
-                                mItemInfo.getIntent().getComponent(),
-                                null,
-                                mItemInfo.user),
-                        mItemInfo.user.getIdentifier(),
-                        new Intent(),
-                        getPosition().stagePosition,
-                        null,
-                        instanceIds.first);
-            }
+                if (mItemInfo.itemType == LauncherSettings.Favorites.ITEM_TYPE_DEEP_SHORTCUT) {
+                    WorkspaceItemInfo workspaceItemInfo = (WorkspaceItemInfo) mItemInfo;
+                    SystemUiProxy.INSTANCE.get(mTarget).startShortcut(
+                            workspaceItemInfo.getIntent().getPackage(),
+                            workspaceItemInfo.getDeepShortcutId(),
+                            getPosition().stagePosition,
+                            null,
+                            workspaceItemInfo.user,
+                            instanceIds.first);
+                } else {
+                    SystemUiProxy.INSTANCE.get(mTarget).startIntent(
+                            mTarget.getSystemService(LauncherApps.class).getMainActivityLaunchIntent(
+                                    mItemInfo.getIntent().getComponent(),
+                                    null,
+                                    mItemInfo.user),
+                            mItemInfo.user.getIdentifier(),
+                            new Intent(),
+                            getPosition().stagePosition,
+                            null,
+                            instanceIds.first);
+                }
+            };
+            TrustLaunchHelper.runWithProtectedAuth(mTarget, mTarget.getTrustAuthHostActivity(),
+                    mTarget.getString(R.string.trust_apps_manager_name), mItemInfo, null,
+                    launchSplit);
         }
     }
 }

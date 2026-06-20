@@ -59,6 +59,7 @@ import static java.lang.invoke.MethodHandles.Lookup.PROTECTED;
 
 import android.animation.AnimatorSet;
 import android.animation.ValueAnimator;
+import android.app.Activity;
 import android.app.ActivityOptions;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -115,6 +116,7 @@ import com.android.launcher3.deviceprofile.TaskbarProfile;
 import com.android.launcher3.folder.Folder;
 import com.android.launcher3.folder.FolderIcon;
 import com.android.launcher3.graphics.ThemeManager;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
 import com.android.launcher3.icons.BitmapRenderer;
 import com.android.launcher3.icons.FastBitmapDrawable;
 import com.android.launcher3.logger.LauncherAtom;
@@ -1720,9 +1722,12 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                         SystemUiProxy.INSTANCE.get(this).showDesktopApp(
                                 info.getTaskId(), remoteTransition,
                                 DesktopTaskToFrontReason.TASKBAR_TAP);
-                if (!runAfterLaunchingDesktopTaskIfInOverview(recents, launchTask)) {
-                    UI_HELPER_EXECUTOR.execute(launchTask);
-                }
+                Runnable launchWithOverviewCheck = () -> {
+                    if (!runAfterLaunchingDesktopTaskIfInOverview(recents, launchTask)) {
+                        UI_HELPER_EXECUTOR.execute(launchTask);
+                    }
+                };
+                runTrustAuthThen(info, launchWithOverviewCheck);
 
             }
             mControllers.taskbarStashController.updateAndAnimateTransientTaskbar(
@@ -1744,20 +1749,26 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                             Toast.makeText(this, R.string.safemode_shortcut_error,
                                     Toast.LENGTH_SHORT).show();
                         } else if (info.isPromise()) {
-                            TestLogging.recordEvent(
-                                    TestProtocol.SEQUENCE_MAIN, "start: taskbarPromiseIcon");
-                            intent = ApiWrapper.INSTANCE.get(this).getAppMarketActivityIntent(
-                                    info.getTargetPackage(), Process.myUserHandle());
-                            startActivity(intent, getSingleActivityLaunchOptions(info).toBundle());
+                            runTrustAuthThen(info, () -> {
+                                TestLogging.recordEvent(
+                                        TestProtocol.SEQUENCE_MAIN, "start: taskbarPromiseIcon");
+                                Intent marketIntent = ApiWrapper.INSTANCE.get(this)
+                                        .getAppMarketActivityIntent(
+                                                info.getTargetPackage(), Process.myUserHandle());
+                                startActivity(marketIntent,
+                                        getSingleActivityLaunchOptions(info).toBundle());
+                            });
                         } else if (info.itemType == Favorites.ITEM_TYPE_DEEP_SHORTCUT) {
-                            TestLogging.recordEvent(
-                                    TestProtocol.SEQUENCE_MAIN, "start: taskbarDeepShortcut");
-                            String id = info.getDeepShortcutId();
-                            String packageName = intent.getPackage();
-                            getSystemService(LauncherApps.class)
-                                    .startShortcut(packageName, id, null,
-                                            getSingleActivityLaunchOptions(info).toBundle(),
-                                            info.user);
+                            runTrustAuthThen(info, () -> {
+                                TestLogging.recordEvent(
+                                        TestProtocol.SEQUENCE_MAIN, "start: taskbarDeepShortcut");
+                                String id = info.getDeepShortcutId();
+                                String packageName = intent.getPackage();
+                                getSystemService(LauncherApps.class)
+                                        .startShortcut(packageName, id, null,
+                                                getSingleActivityLaunchOptions(info).toBundle(),
+                                                info.user);
+                            });
                         } else {
                             launchFromTaskbar(recents, view, Collections.singletonList(info));
                         }
@@ -1850,13 +1861,16 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
 
             if (onDesktop) {
                 boolean useRemoteTransition = canUnminimizeDesktopTask(singleTask.getTask().key.id);
-                UI_HELPER_EXECUTOR.execute(() -> {
-                    SystemUiProxy.INSTANCE.get(this).showDesktopApp(singleTask.getTask().key.id,
-                            useRemoteTransition ? remoteTransition : null, toFrontReason);
-                });
+                Runnable launchDesktop = () -> UI_HELPER_EXECUTOR.execute(() ->
+                        SystemUiProxy.INSTANCE.get(this).showDesktopApp(
+                                singleTask.getTask().key.id,
+                                useRemoteTransition ? remoteTransition : null, toFrontReason));
+                TrustLaunchHelper.runWithProtectedAuthForTask(this,
+                        getAuthHostActivityForTrust(), getString(R.string.trust_apps_manager_name),
+                        singleTask.getTask().key, launchDesktop);
                 return;
             }
-            UI_HELPER_EXECUTOR.execute(() -> {
+            Runnable launchFromRecents = () -> UI_HELPER_EXECUTOR.execute(() -> {
                 ActivityOptions activityOptions =
                         makeDefaultActivityOptions(SPLASH_SCREEN_STYLE_UNDEFINED).options;
                 activityOptions.setRemoteTransition(remoteTransition);
@@ -1864,6 +1878,9 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                 ActivityManagerWrapper.getInstance().startActivityFromRecents(
                         singleTask.getTask().key, activityOptions);
             });
+            TrustLaunchHelper.runWithProtectedAuthForTask(this,
+                    getAuthHostActivityForTrust(), getString(R.string.trust_apps_manager_name),
+                    singleTask.getTask().key, launchFromRecents);
             return;
         }
 
@@ -1924,15 +1941,19 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
             // If the icon is an app pair, the logic gets a bit complicated because we play
             // different animations depending on which app (or app pair) is currently running on
             // screen, so delegate logic to appPairsController.
-            if (recents != null && recents.getSplitSelectController() != null
-                    && launchingIconView != null) {
-                // TODO: b/441341469 - Split screen should be handled correctly on CD.
-                recents.getSplitSelectController().getAppPairsController()
-                        .handleAppPairLaunchInApp((AppPairIcon) launchingIconView, itemInfos);
-            }
+            Runnable launchAppPair = () -> {
+                if (recents != null && recents.getSplitSelectController() != null
+                        && launchingIconView != null) {
+                    // TODO: b/441341469 - Split screen should be handled correctly on CD.
+                    recents.getSplitSelectController().getAppPairsController()
+                            .handleAppPairLaunchInApp((AppPairIcon) launchingIconView, itemInfos);
+                }
+            };
+            TrustLaunchHelper.runWithProtectedAuthForAny(this, getAuthHostActivityForTrust(),
+                    getString(R.string.trust_apps_manager_name), itemInfos, launchAppPair);
         } else {
             // Tapped a single app, nothing complicated here.
-            startItemInfoActivity(itemInfos.get(0), null /*foundTask*/);
+            startItemInfoActivity(itemInfos.get(0), null /* foundTask */);
         }
     }
 
@@ -1972,15 +1993,21 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                     if (isLaunchingAppPair) {
                         // Finish recents animation if it's running before launching to ensure
                         // we get both leashes for the animation
-                        mControllers.uiController.setSkipNextRecentsAnimEnd();
-                        recents.switchToScreenshot(() ->
-                                recents.finishRecentsAnimation(true /*toHome*/,
-                                        false /*shouldPip*/,
-                                        () -> recents
-                                                .getSplitSelectController()
-                                                .getAppPairsController()
-                                                .launchAppPair((AppPairIcon) launchingIconView,
-                                                        -1 /*cuj*/)));
+                        Runnable launchAppPairTask = () -> {
+                            mControllers.uiController.setSkipNextRecentsAnimEnd();
+                            recents.switchToScreenshot(() ->
+                                    recents.finishRecentsAnimation(true /*toHome*/,
+                                            false /*shouldPip*/,
+                                            () -> recents
+                                                    .getSplitSelectController()
+                                                    .getAppPairsController()
+                                                    .launchAppPair((AppPairIcon) launchingIconView,
+                                                            -1 /*cuj*/)));
+                        };
+                        TrustLaunchHelper.runWithProtectedAuthForAny(
+                                TaskbarActivityContext.this, getAuthHostActivityForTrust(),
+                                getString(R.string.trust_apps_manager_name), itemInfos,
+                                launchAppPairTask);
                     } else {
                         Runnable launchTask =
                                 () -> startItemInfoActivity(itemInfos.get(0), foundTask);
@@ -1992,12 +2019,51 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
         );
     }
 
+    @Nullable
+    @Override
+    public Activity getTrustAuthHostActivity() {
+        return getAuthHostActivityForTrust();
+    }
+
+    @Nullable
+    private Activity getAuthHostActivityForTrust() {
+        TaskbarUIController ui = mControllers.uiController;
+        if (ui instanceof LauncherTaskbarUIController launcherUi) {
+            return launcherUi.getAuthHostLauncher();
+        }
+        if (ui instanceof FallbackTaskbarUIController fallbackUi) {
+            return fallbackUi.getAuthHostActivity();
+        }
+        return null;
+    }
+
+    private void runTrustAuthThen(@NonNull ItemInfo item, @NonNull Runnable launch) {
+        TrustLaunchHelper.runWithProtectedAuth(this, getTrustAuthHostActivity(),
+                getString(R.string.trust_apps_manager_name), item, null, launch);
+    }
+
+    @Override
+    public RunnableList startActivitySafely(View v, Intent intent, ItemInfo item) {
+        return TrustLaunchHelper.startActivitySafelyWithProtectedGate(
+                this, getTrustAuthHostActivity(),
+                getString(R.string.trust_apps_manager_name), v, intent, item,
+                this::startActivitySafelyUnchecked);
+    }
+
+    private RunnableList startActivitySafelyUnchecked(View v, Intent intent, ItemInfo item) {
+        return super.startActivitySafely(v, intent, item);
+    }
+
     /**
      * Starts an activity with the information provided by the "info" param. However, if
      * taskInRecents is present, it will prioritize re-launching an existing instance via
      * {@link ActivityManagerWrapper#startActivityFromRecents(int, ActivityOptions)}
      */
     private void startItemInfoActivity(ItemInfo info, @Nullable Task taskInRecents) {
+        runTrustAuthThen(info, () -> startItemInfoActivityUnchecked(info, taskInRecents));
+    }
+
+    private void startItemInfoActivityUnchecked(ItemInfo info, @Nullable Task taskInRecents) {
         Intent intent = new Intent(info.getIntent())
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
@@ -2074,7 +2140,8 @@ public class TaskbarActivityContext extends BaseTaskbarContext {
                             remoteTransition, DesktopTaskToFrontReason.TASKBAR_TAP));
             return;
         }
-        // There is no task associated with this launch - launch a new task through an intent
+        // There is no task associated with this launch - launch a new task through an intent.
+        // Auth was already handled by startItemInfoActivity -> runTrustAuthThen.
         ActivityOptionsWrapper opts = getActivityLaunchDesktopOptions();
         if (DesktopModeFlags.ENABLE_START_LAUNCH_TRANSITION_FROM_TASKBAR_BUGFIX.isTrue()) {
             mSysUiProxy.startLaunchIntentTransition(intent, opts.options.toBundle(), displayId);
