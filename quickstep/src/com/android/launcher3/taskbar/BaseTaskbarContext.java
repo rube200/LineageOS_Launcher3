@@ -15,12 +15,15 @@
  */
 package com.android.launcher3.taskbar;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ShortcutInfo;
 import android.graphics.Point;
 import android.os.UserHandle;
 import android.view.LayoutInflater;
+
+import androidx.annotation.Nullable;
 
 import com.android.launcher3.LifecycleTracker;
 import com.android.launcher3.dagger.LauncherComponentProvider;
@@ -57,6 +60,14 @@ public abstract class BaseTaskbarContext extends BaseContext
      */
     public final boolean isPrimaryDisplay() {
         return mIsPrimaryDisplay;
+    }
+
+    /**
+     *Activity host for protected-app auth; overridden when a launcher activity is available.
+     */
+    @Nullable
+    public Activity getTrustAuthHostActivity() {
+        return null;
     }
 
     /**
