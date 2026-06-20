@@ -25,6 +25,7 @@ import static com.android.launcher3.Flags.enableRefactorTaskThumbnail;
 import static com.android.launcher3.logging.StatsLogManager.LauncherEvent.LAUNCHER_SYSTEM_SHORTCUT_FREE_FORM_TAP;
 import static com.android.launcher3.util.SplitConfigurationOptions.STAGE_POSITION_BOTTOM_OR_RIGHT;
 
+import android.app.Activity;
 import android.app.ActivityOptions;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -44,6 +45,7 @@ import androidx.annotation.Nullable;
 
 import com.android.launcher3.DeviceProfile;
 import com.android.launcher3.R;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
 import com.android.launcher3.logging.StatsLogManager.LauncherEvent;
 import com.android.launcher3.model.WellbeingModel;
 import com.android.launcher3.popup.SystemShortcut;
@@ -175,6 +177,12 @@ public interface TaskShortcutFactory {
         }
     }
 
+    /** @return an activity host for biometric prompts when the container is an activity. */
+    @Nullable
+    static Activity getAuthHostActivity(RecentsViewContainer container) {
+        return container instanceof Activity ? (Activity) container : null;
+    }
+
     class FreeformSystemShortcut extends SystemShortcut<RecentsViewContainer> {
         private static final String TAG = "FreeformSystemShortcut";
 
@@ -214,53 +222,65 @@ public interface TaskShortcutFactory {
                 return;
             }
             final Task.TaskKey taskKey = mTaskContainer.getTask().key;
-            final int taskId = taskKey.id;
-            options.setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_ICON);
-            if (ActivityManagerWrapper.getInstance().startActivityFromRecents(taskId,
-                    options)) {
-                final Runnable animStartedListener = () -> {
-                    // Hide the task view and wait for the window to be resized
-                    // TODO: Consider animating in launcher and do an in-place start activity
-                    //       afterwards
-                    mRecentsView.setIgnoreResetTask(taskId);
-                    mTaskView.setAlpha(0f);
-                };
-
-                final int[] position = new int[2];
-                View snapShotView = mTaskContainer.getSnapshotView();
-                snapShotView.getLocationOnScreen(position);
-                final int width = (int) (snapShotView.getWidth() * mTaskView.getScaleX());
-                final int height = (int) (snapShotView.getHeight() * mTaskView.getScaleY());
-                final Rect taskBounds = new Rect(position[0], position[1],
-                        position[0] + width, position[1] + height);
-
-                // Take the thumbnail of the task without a scrim and apply it back after
-                Bitmap thumbnail;
-                if (enableRefactorTaskThumbnail()) {
-                    thumbnail = mTaskContainer.getThumbnail();
-                } else {
-                    float alpha = mTaskContainer.getThumbnailViewDeprecated().getDimAlpha();
-                    mTaskContainer.getThumbnailViewDeprecated().setDimAlpha(0);
-                    thumbnail = RecentsTransition.drawViewIntoHardwareBitmap(
-                            taskBounds.width(), taskBounds.height(), snapShotView, 1f, Color.BLACK);
-                    mTaskContainer.getThumbnailViewDeprecated().setDimAlpha(alpha);
+            Runnable launchFromRecents = () -> {
+                final int taskId = taskKey.id;
+                options.setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_ICON);
+                if (!ActivityManagerWrapper.getInstance().startActivityFromRecents(taskId,
+                        options)) {
+                    return;
                 }
+                startActivityFromRecentsSucceeded(taskId);
+            };
+            TrustLaunchHelper.runWithProtectedAuthForTask(mTarget.asContext(),
+                    getAuthHostActivity(mTarget),
+                    mTarget.asContext().getString(R.string.trust_apps_manager_name), taskKey,
+                    launchFromRecents);
+        }
 
-                AppTransitionAnimationSpecsFuture future =
-                        new AppTransitionAnimationSpecsFuture(mHandler) {
-                            @Override
-                            public List<AppTransitionAnimationSpecCompat> composeSpecs() {
-                                return Collections.singletonList(
-                                        new AppTransitionAnimationSpecCompat(
-                                                taskId, thumbnail, taskBounds));
-                            }
-                        };
-                overridePendingAppTransitionMultiThumbFuture(
-                        future, animStartedListener, mHandler, true /* scaleUp */,
-                        taskKey.displayId);
-                mTarget.getStatsLogManager().logger().withItemInfo(mTaskContainer.getItemInfo())
-                            .log(mLauncherEvent);
+        private void startActivityFromRecentsSucceeded(int taskId) {
+            final Runnable animStartedListener = () -> {
+                // Hide the task view and wait for the window to be resized
+                // TODO: Consider animating in launcher and do an in-place start activity
+                //       afterwards
+                mRecentsView.setIgnoreResetTask(taskId);
+                mTaskView.setAlpha(0f);
+            };
+
+            final int[] position = new int[2];
+            View snapShotView = mTaskContainer.getSnapshotView();
+            snapShotView.getLocationOnScreen(position);
+            final int width = (int) (snapShotView.getWidth() * mTaskView.getScaleX());
+            final int height = (int) (snapShotView.getHeight() * mTaskView.getScaleY());
+            final Rect taskBounds = new Rect(position[0], position[1],
+                    position[0] + width, position[1] + height);
+
+            // Take the thumbnail of the task without a scrim and apply it back after
+            Bitmap thumbnail;
+            if (enableRefactorTaskThumbnail()) {
+                thumbnail = mTaskContainer.getThumbnail();
+            } else {
+                float alpha = mTaskContainer.getThumbnailViewDeprecated().getDimAlpha();
+                mTaskContainer.getThumbnailViewDeprecated().setDimAlpha(0);
+                thumbnail = RecentsTransition.drawViewIntoHardwareBitmap(
+                        taskBounds.width(), taskBounds.height(), snapShotView, 1f, Color.BLACK);
+                mTaskContainer.getThumbnailViewDeprecated().setDimAlpha(alpha);
             }
+
+            final Task.TaskKey taskKey = mTaskContainer.getTask().key;
+            AppTransitionAnimationSpecsFuture future =
+                    new AppTransitionAnimationSpecsFuture(mHandler) {
+                        @Override
+                        public List<AppTransitionAnimationSpecCompat> composeSpecs() {
+                            return Collections.singletonList(
+                                    new AppTransitionAnimationSpecCompat(
+                                            taskId, thumbnail, taskBounds));
+                        }
+                    };
+            overridePendingAppTransitionMultiThumbFuture(
+                    future, animStartedListener, mHandler, true /* scaleUp */,
+                    taskKey.displayId);
+            mTarget.getStatsLogManager().logger().withItemInfo(mTaskContainer.getItemInfo())
+                    .log(mLauncherEvent);
         }
 
         /**
@@ -438,10 +458,16 @@ public interface TaskShortcutFactory {
 
         @Override
         public void onClick(View view) {
-            if (mTaskContainer.getTaskView().launchAsStaticTile() != null) {
-                SystemUiProxy.INSTANCE.get(mTarget.asContext()).startScreenPinning(
-                        mTaskContainer.getTask().key.id);
-            }
+            Runnable pinLaunch = () -> {
+                if (mTaskContainer.getTaskView().launchAsStaticTile() != null) {
+                    SystemUiProxy.INSTANCE.get(mTarget.asContext()).startScreenPinning(
+                            mTaskContainer.getTask().key.id);
+                }
+            };
+            TrustLaunchHelper.runWithProtectedAuthForTask(mTarget.asContext(),
+                    getAuthHostActivity(mTarget),
+                    mTarget.asContext().getString(R.string.trust_apps_manager_name),
+                    mTaskContainer.getTask().key, pinLaunch);
             dismissTaskMenuView();
             mTarget.getStatsLogManager().logger().withItemInfo(mTaskContainer.getItemInfo())
                         .log(LauncherEvent.LAUNCHER_SYSTEM_SHORTCUT_PIN_TAP);

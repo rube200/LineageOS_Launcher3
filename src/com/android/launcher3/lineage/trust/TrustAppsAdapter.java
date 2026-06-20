@@ -72,6 +72,8 @@ class TrustAppsAdapter extends RecyclerView.Adapter<TrustAppsAdapter.ViewHolder>
         void onHiddenItemChanged(@NonNull TrustComponent component);
 
         void onProtectedItemChanged(@NonNull TrustComponent component);
+
+        void onAppClicked(@NonNull TrustComponent component);
     }
 
     class ViewHolder extends RecyclerView.ViewHolder {
@@ -100,49 +102,70 @@ class TrustAppsAdapter extends RecyclerView.Adapter<TrustAppsAdapter.ViewHolder>
 
             mProtectedView.setVisibility(hasSecureKeyguard ? View.VISIBLE : View.GONE);
 
+            itemView.setOnClickListener(v -> mListener.onAppClicked(component));
+
             mHiddenView.setOnClickListener(v -> {
                 component.invertVisibility();
 
-                mHiddenView.setImageResource(component.isHidden() ?
-                        R.drawable.avd_hidden_lock : R.drawable.avd_hidden_unlock);
-                AnimatedVectorDrawable avd = (AnimatedVectorDrawable) mHiddenView.getDrawable();
-
-                int position = getAdapterPosition();
-                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
-                    avd.registerAnimationCallback(new Animatable2.AnimationCallback() {
-                        @Override
-                        public void onAnimationEnd(Drawable drawable) {
-                            updateHiddenList(position, component);
-                        }
-                    });
-                    avd.start();
-                } else {
-                    avd.start();
-                    updateHiddenList(position, component);
-                }
+                runToggleAnimation(mHiddenView, component.isHidden()
+                                ? R.drawable.avd_hidden_lock : R.drawable.avd_hidden_unlock,
+                        () -> {
+                            int pos = getBindingAdapterPosition();
+                            if (pos != RecyclerView.NO_POSITION) {
+                                updateHiddenList(pos, component);
+                            } else {
+                                mListener.onHiddenItemChanged(component);
+                            }
+                        });
             });
 
             mProtectedView.setOnClickListener(v -> {
                 component.invertProtection();
 
-                mProtectedView.setImageResource(component.isProtected() ?
-                        R.drawable.avd_protected_lock : R.drawable.avd_protected_unlock);
-                AnimatedVectorDrawable avd = (AnimatedVectorDrawable) mProtectedView.getDrawable();
-
-                int position = getAdapterPosition();
-                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
-                    avd.registerAnimationCallback(new Animatable2.AnimationCallback() {
-                        @Override
-                        public void onAnimationEnd(Drawable drawable) {
-                            updateProtectedList(position, component);
-                        }
-                    });
-                    avd.start();
-                } else {
-                    avd.start();
-                    updateProtectedList(position, component);
-                }
+                runToggleAnimation(mProtectedView, component.isProtected()
+                                ? R.drawable.avd_protected_lock : R.drawable.avd_protected_unlock,
+                        () -> {
+                            int pos = getBindingAdapterPosition();
+                            if (pos != RecyclerView.NO_POSITION) {
+                                updateProtectedList(pos, component);
+                            } else {
+                                mListener.onProtectedItemChanged(component);
+                            }
+                        });
             });
+        }
+
+        private void runToggleAnimation(
+                @NonNull ImageView view, int avdRes, @NonNull Runnable onAnimationEnd) {
+            view.setImageResource(avdRes);
+            Drawable drawable = view.getDrawable();
+            if (!(drawable instanceof AnimatedVectorDrawable)) {
+                onAnimationEnd.run();
+                return;
+            }
+            AnimatedVectorDrawable avd = (AnimatedVectorDrawable) drawable;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                avd.clearAnimationCallbacks();
+                avd.registerAnimationCallback(new Animatable2.AnimationCallback() {
+                    @Override
+                    public void onAnimationEnd(Drawable animationDrawable) {
+                        avd.unregisterAnimationCallback(this);
+                        onAnimationEnd.run();
+                    }
+                });
+                avd.start();
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                avd.registerAnimationCallback(new Animatable2.AnimationCallback() {
+                    @Override
+                    public void onAnimationEnd(Drawable animationDrawable) {
+                        onAnimationEnd.run();
+                    }
+                });
+                avd.start();
+            } else {
+                avd.start();
+                onAnimationEnd.run();
+            }
         }
 
         private void updateHiddenList(int position, TrustComponent component) {

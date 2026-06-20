@@ -1,5 +1,6 @@
 package com.android.launcher3.lineage;
 
+import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.hardware.biometrics.BiometricManager.Authenticators;
@@ -9,6 +10,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.android.launcher3.R;
 
 public class LineageUtils {
@@ -17,43 +21,76 @@ public class LineageUtils {
      * Shows authentication screen to confirm credentials (pin, pattern or password) for the current
      * user of the device.
      *
-     * @param context The {@code Context} used to get {@code KeyguardManager} service
-     * @param title the {@code String} which will be shown as the pompt title
-     * @param successRunnable The {@code Runnable} which will be executed if the user does not setup
-     *                        device security or if lock screen is unlocked
+     * @param cancelRunnable run when the user dismisses the prompt without authenticating
      */
-    public static void showLockScreen(Context context, String title, Runnable successRunnable) {
+    public static void showLockScreen(
+            @NonNull Context context,
+            @Nullable Activity activityHost,
+            @NonNull String title,
+            @NonNull Runnable successRunnable,
+            @Nullable Runnable cancelRunnable) {
+        showLockScreenInternal(context, activityHost, title, successRunnable, cancelRunnable,
+                true /* allowWhenNoKeyguard */);
+    }
+
+    /** Device auth for protected app launches; does not run {@code onAuthenticated} without a lock. */
+    public static void showLockScreenForProtectedLaunch(
+            @NonNull Context context,
+            @Nullable Activity activityHost,
+            @NonNull String title,
+            @NonNull Runnable onAuthenticated) {
+        showLockScreenInternal(context, activityHost, title, onAuthenticated,
+                null /* cancelRunnable */, false /* allowWhenNoKeyguard */);
+    }
+
+    private static void showLockScreenInternal(
+            @NonNull Context context,
+            @Nullable Activity activityHost,
+            @NonNull String title,
+            @NonNull Runnable successRunnable,
+            @Nullable Runnable cancelRunnable,
+            boolean allowWhenNoKeyguard) {
         if (hasSecureKeyguard(context)) {
-            final BiometricPrompt.AuthenticationCallback authenticationCallback =
-                    new BiometricPrompt.AuthenticationCallback() {
-                        @Override
-                        public void onAuthenticationSucceeded(
-                                    BiometricPrompt.AuthenticationResult result) {
-                            successRunnable.run();
-                        }
+            final Handler mainHandler = new Handler(Looper.getMainLooper());
+            mainHandler.post(() -> {
+                final Context promptContext = activityHost != null ? activityHost : context;
+                final BiometricPrompt.AuthenticationCallback authenticationCallback =
+                        new BiometricPrompt.AuthenticationCallback() {
+                            @Override
+                            public void onAuthenticationSucceeded(
+                                        BiometricPrompt.AuthenticationResult result) {
+                                successRunnable.run();
+                            }
 
-                        @Override
-                        public void onAuthenticationError(int errorCode, CharSequence errString) {
-                            //Do nothing
-                        }
-            };
+                            @Override
+                            public void onAuthenticationError(int errorCode,
+                                    CharSequence errString) {
+                                if (cancelRunnable != null) {
+                                    cancelRunnable.run();
+                                }
+                            }
+                };
 
-            final BiometricPrompt bp = new BiometricPrompt.Builder(context)
-                    .setTitle(title)
-                    .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG |
-                                              Authenticators.DEVICE_CREDENTIAL)
-                    .build();
+                final BiometricPrompt bp = new BiometricPrompt.Builder(promptContext)
+                        .setTitle(title)
+                        .setAllowedAuthenticators(Authenticators.BIOMETRIC_STRONG |
+                                                  Authenticators.DEVICE_CREDENTIAL)
+                        .build();
 
-            final Handler handler = new Handler(Looper.getMainLooper());
-            bp.authenticate(new CancellationSignal(),
-                    runnable -> handler.post(runnable),
-                    authenticationCallback);
-        } else {
-            // Notify the user a secure keyguard is required for protected apps,
-            // but allow to set hidden apps
+                bp.authenticate(new CancellationSignal(),
+                        runnable -> mainHandler.post(runnable),
+                        authenticationCallback);
+            });
+        } else if (allowWhenNoKeyguard) {
             Toast.makeText(context, R.string.trust_apps_no_lock_error, Toast.LENGTH_LONG)
                 .show();
             successRunnable.run();
+        } else {
+            Toast.makeText(context, R.string.trust_apps_no_lock_error, Toast.LENGTH_LONG)
+                .show();
+            if (cancelRunnable != null) {
+                cancelRunnable.run();
+            }
         }
     }
 

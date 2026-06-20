@@ -32,6 +32,7 @@ import com.android.launcher3.BubbleTextView;
 import com.android.launcher3.LauncherSettings;
 import com.android.launcher3.R;
 import com.android.launcher3.accessibility.BaseAccessibilityDelegate;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
 import com.android.launcher3.logging.StatsLogManager;
 import com.android.launcher3.model.data.ItemInfo;
 import com.android.launcher3.model.data.ItemInfoWithIcon;
@@ -120,24 +121,28 @@ public class TaskbarShortcutMenuAccessibilityDelegate
                     .withInstanceId(instanceIds.second)
                     .log(getLogEventForPosition(side));
 
-            if (info.itemType == LauncherSettings.Favorites.ITEM_TYPE_DEEP_SHORTCUT
-                    && item instanceof WorkspaceItemInfo) {
-                SystemUiProxy.INSTANCE.get(mContext).startShortcut(
-                        info.getIntent().getPackage(),
-                        ((WorkspaceItemInfo) info).getDeepShortcutId(),
-                        side,
-                        /* bundleOpts= */ null,
-                        info.user,
-                        instanceIds.first);
-            } else {
-                SystemUiProxy.INSTANCE.get(mContext).startIntent(
-                        mLauncherApps.getMainActivityLaunchIntent(
-                                item.getIntent().getComponent(),
-                                /* startActivityOptions= */null,
-                                item.user),
-                        item.user.getIdentifier(), new Intent(), side, null,
-                        instanceIds.first);
-            }
+            Runnable launchSplit = () -> {
+                if (info.itemType == LauncherSettings.Favorites.ITEM_TYPE_DEEP_SHORTCUT
+                        && item instanceof WorkspaceItemInfo) {
+                    SystemUiProxy.INSTANCE.get(mContext).startShortcut(
+                            info.getIntent().getPackage(),
+                            ((WorkspaceItemInfo) info).getDeepShortcutId(),
+                            side,
+                            /* bundleOpts= */ null,
+                            info.user,
+                            instanceIds.first);
+                } else {
+                    SystemUiProxy.INSTANCE.get(mContext).startIntent(
+                            mLauncherApps.getMainActivityLaunchIntent(
+                                    item.getIntent().getComponent(),
+                                    /* startActivityOptions= */null,
+                                    item.user),
+                            item.user.getIdentifier(), new Intent(), side, null,
+                            instanceIds.first);
+                }
+            };
+            TrustLaunchHelper.runWithProtectedAuth(mContext, mContext.getTrustAuthHostActivity(),
+                    mContext.getString(R.string.trust_apps_manager_name), item, null, launchSplit);
             return true;
         }
         return false;

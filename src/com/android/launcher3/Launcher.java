@@ -186,7 +186,8 @@ import com.android.launcher3.dragndrop.SystemDragController;
 import com.android.launcher3.folder.Folder;
 import com.android.launcher3.folder.FolderIcon;
 import com.android.launcher3.keyboard.ViewGroupFocusHelper;
-import com.android.launcher3.lineage.LineageUtils;
+import com.android.launcher3.lineage.trust.TrustLaunchHelper;
+import com.android.launcher3.views.ActivityContext;
 import com.android.launcher3.logger.LauncherAtom;
 import com.android.launcher3.logger.LauncherAtom.ContainerInfo;
 import com.android.launcher3.logger.LauncherAtom.WorkspaceContainer;
@@ -1786,14 +1787,45 @@ public class Launcher extends StatefulActivity<LauncherState>
 
     @Override
     public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
+        if (TrustLaunchHelper.isProtectedLaunch(this, null, intent)) {
+            TrustLaunchHelper.authThenRun(this, this,
+                    TrustLaunchHelper.getProtectedLaunchAuthTitle(this, intent,
+                            getString(R.string.trust_apps_manager_name)),
+                    () -> startActivityForResultInternal(intent, requestCode, options));
+            return;
+        }
+        startActivityForResultInternal(intent, requestCode, options);
+    }
+
+    private void startActivityForResultInternal(Intent intent, int requestCode, Bundle options) {
         if (requestCode != -1) {
             mPendingActivityRequestCode = requestCode;
         }
         super.startActivityForResult(intent, requestCode, options);
     }
 
+    /** Called after protected-launch auth from QuickstepLauncher. */
+    protected final void performStartActivityForResultInternal(
+            Intent intent, int requestCode, Bundle options) {
+        startActivityForResultInternal(intent, requestCode, options);
+    }
+
     @Override
     public void startIntentSenderForResult(IntentSender intent, int requestCode,
+            Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options) {
+        if (TrustLaunchHelper.isProtectedLaunch(this, null, fillInIntent)) {
+            TrustLaunchHelper.authThenRun(this, this,
+                    TrustLaunchHelper.getProtectedLaunchAuthTitle(this, fillInIntent,
+                            getString(R.string.trust_apps_manager_name)),
+                    () -> startIntentSenderForResultInternal(intent, requestCode, fillInIntent,
+                            flagsMask, flagsValues, extraFlags, options));
+            return;
+        }
+        startIntentSenderForResultInternal(intent, requestCode, fillInIntent, flagsMask,
+                flagsValues, extraFlags, options);
+    }
+
+    private void startIntentSenderForResultInternal(IntentSender intent, int requestCode,
             Intent fillInIntent, int flagsMask, int flagsValues, int extraFlags, Bundle options) {
         if (requestCode != -1) {
             mPendingActivityRequestCode = requestCode;
@@ -1804,6 +1836,14 @@ public class Launcher extends StatefulActivity<LauncherState>
         } catch (Exception e) {
             throw new ActivityNotFoundException();
         }
+    }
+
+    /** Called after protected-launch auth from QuickstepLauncher. */
+    protected final void performStartIntentSenderForResultInternal(
+            IntentSender intent, int requestCode, Intent fillInIntent, int flagsMask,
+            int flagsValues, int extraFlags, Bundle options) {
+        startIntentSenderForResultInternal(intent, requestCode, fillInIntent, flagsMask,
+                flagsValues, extraFlags, options);
     }
 
     void addAppWidgetFromDropImpl(int appWidgetId, ItemInfo info, AppWidgetHostView boundWidget,
@@ -2139,6 +2179,12 @@ public class Launcher extends StatefulActivity<LauncherState>
             return null;
         }
 
+        return TrustLaunchHelper.startActivitySafelyWithProtectedGate(
+                this, this, getString(R.string.trust_apps_manager_name), v, intent, item,
+                this::startActivitySafelyInternal);
+    }
+
+    private RunnableList startActivitySafelyInternal(View v, Intent intent, ItemInfo item) {
         RunnableList result = super.startActivitySafely(v, intent, item);
         if (result != null && v instanceof BubbleTextView) {
             // This is set to the view that launched the activity that navigated the user away
@@ -2150,12 +2196,6 @@ public class Launcher extends StatefulActivity<LauncherState>
             result.add(() -> btv.setStayPressed(false));
         }
         return result;
-    }
-
-    public void startActivitySafelyAuth(View v, Intent intent, ItemInfo item) {
-        LineageUtils.showLockScreen(this, getString(R.string.trust_apps_manager_name), () -> {
-            startActivitySafely(v, intent, item);
-        });
     }
 
     boolean isHotseatLayout(View layout) {

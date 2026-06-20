@@ -20,6 +20,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.annotation.IdRes
+import android.app.Activity
 import android.app.ActivityOptions
 import android.app.ActivityTaskManager.INVALID_TASK_ID
 import android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN
@@ -57,6 +58,7 @@ import com.android.launcher3.Flags.enableRefactorTaskThumbnail
 import com.android.launcher3.R
 import com.android.launcher3.Utilities
 import com.android.launcher3.anim.AnimatedFloat
+import com.android.launcher3.lineage.trust.TrustLaunchHelper
 import com.android.launcher3.logging.StatsLogManager.LauncherEvent
 import com.android.launcher3.model.data.ItemInfo
 import com.android.launcher3.model.data.TaskViewItemInfo
@@ -1476,6 +1478,25 @@ constructor(
 
     /** Launch of the current task (both live and inactive tasks) with an animation. */
     fun launchWithAnimation(): RunnableList? {
+        val keys = taskContainers.map { it.task.key }.toTypedArray()
+        if (keys.isEmpty()) {
+            return launchWithAnimationUnchecked()
+        }
+        if (!TrustLaunchHelper.isAnyProtectedLaunchForTaskKeys(context, *keys)) {
+            return launchWithAnimationUnchecked()
+        }
+        val pending = RunnableList()
+        TrustLaunchHelper.runWithProtectedAuthForAnyTaskKey(
+            context,
+            container as? Activity,
+            context.getString(R.string.trust_apps_manager_name),
+            Runnable { completeLaunchWithAnimation(pending) },
+            *keys,
+        )
+        return pending
+    }
+
+    private fun launchWithAnimationUnchecked(): RunnableList? {
         return if (isRunningTask && recentsView?.remoteTargetHandles != null) {
                 launchAsLiveTile(recentsView?.remoteTargetHandles!!)
             } else {
@@ -1489,6 +1510,15 @@ constructor(
                     )
                 }
             }
+    }
+
+    private fun completeLaunchWithAnimation(pending: RunnableList) {
+        val result = launchWithAnimationUnchecked()
+        if (result != null) {
+            result.add { pending.executeAllAndDestroy() }
+        } else {
+            pending.executeAllAndDestroy()
+        }
     }
 
     private fun launchAsLiveTile(remoteTargetHandles: Array<RemoteTargetHandle>): RunnableList? {
@@ -1694,26 +1724,47 @@ constructor(
                     // TODO(b/331754864): Update this to use TV.shouldShowSplash
                     disableStartingWindow = firstTaskContainer.shouldShowSplashView
                 }
-        Executors.UI_HELPER_EXECUTOR.execute {
-            Log.d(
-                TAG,
-                "launchWithoutAnimation(isQuickSwitch: $isQuickSwitch) - " +
-                    "startActivityFromRecents: ${taskIds.contentToString()}",
-            )
-            if (
-                !ActivityManagerWrapper.getInstance()
-                    .startActivityFromRecents(firstTaskContainer.task.key, opts)
-            ) {
-                Log.d(TAG, "launchWithoutAnimation - task launch failed")
-                // If the call to start activity failed, then post the result immediately,
-                // otherwise, wait for the animation start callback from the activity options
-                // above
-                Executors.MAIN_EXECUTOR.post {
-                    notifyTaskLaunchFailed("launchTask")
-                    callbackWithLogging(false)
+        runWithProtectedAuthForTask(
+            Runnable {
+                Executors.UI_HELPER_EXECUTOR.execute {
+                    Log.d(
+                        TAG,
+                        "launchWithoutAnimation(isQuickSwitch: $isQuickSwitch) - " +
+                            "startActivityFromRecents: ${taskIds.contentToString()}",
+                    )
+                    if (
+                        !ActivityManagerWrapper.getInstance()
+                            .startActivityFromRecents(firstTaskContainer.task.key, opts)
+                    ) {
+                        Log.d(TAG, "launchWithoutAnimation - task launch failed")
+                        // If the call to start activity failed, then post the result immediately,
+                        // otherwise, wait for the animation start callback from the activity
+                        // options
+                        // above
+                        Executors.MAIN_EXECUTOR.post {
+                            notifyTaskLaunchFailed("launchTask")
+                            callbackWithLogging(false)
+                        }
+                    }
                 }
             }
+        )
+    }
+
+    private fun runWithProtectedAuthForTask(launch: Runnable) {
+        val keys = taskContainers.map { it.task.key }.toTypedArray()
+        if (keys.isEmpty()) {
+            launch.run()
+            return
         }
+        val activityHost = container as? Activity
+        TrustLaunchHelper.runWithProtectedAuthForAnyTaskKey(
+            context,
+            activityHost,
+            context.getString(R.string.trust_apps_manager_name),
+            launch,
+            *keys,
+        )
     }
 
     private fun notifyTaskLaunchFailed(launchMethod: String) {
