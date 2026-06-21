@@ -29,6 +29,10 @@
     <string name="drawer_open_keyboard_summary">Abrir o teclado sempre que a gaveta de aplicações se tornar visível</string>
     <string name="pref_sleep_gesture_title">Toque duplo para desligar o ecrã</string>
     <string name="pref_sleep_gesture_summary">Toque duas vezes numa área vazia da página inicial para desligar o ecrã</string>
+    <string name="pref_hidden_drawer_gesture_title">Afastar os dedos para abrir aplicações ocultas</string>
+    <string name="pref_hidden_drawer_gesture_summary">Afaste rapidamente dois dedos no ecrã inicial para abrir a lista de aplicações ocultas</string>
+    <string name="hidden_apps_drawer_title">Aplicações ocultas</string>
+    <string name="hidden_apps_drawer_empty">Nenhuma aplicação oculta. Oculte aplicações em Aplicações Ocultas e Protegidas nas definições.</string>
     <string name="trust_apps_manager_name">Aplicações Ocultas e Protegidas</string>
     <string name="trust_apps_auth_manager">Desbloquear para gerir as aplicações ocultas e protegidas</string>
     <string name="trust_apps_auth_open_app">Autenticar para abrir %1$s</string>
