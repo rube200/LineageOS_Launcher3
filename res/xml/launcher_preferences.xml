@@ -71,6 +71,13 @@
         android:summary="@string/pref_show_google_now_summary"
         android:title="@string/title_show_google_app" />
 
+    <SwitchPreferenceCompat
+        android:defaultValue="false"
+        android:key="pref_hidden_drawer_gesture"
+        android:persistent="true"
+        android:title="@string/pref_hidden_drawer_gesture_title"
+        android:summary="@string/pref_hidden_drawer_gesture_summary" />
+
     <Preference
         android:key="pref_trust_apps"
         android:title="@string/trust_apps_manager_name" />
