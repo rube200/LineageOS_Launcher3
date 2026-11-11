@@ -1,0 +1,118 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 5 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+
+env:
+  UPSTREAM_URL: https://github.com/LineageOS/android_packages_apps_Launcher3.git
+  UPSTREAM_BRANCH: lineage-23.2
+
+jobs:
+  check:
+    name: Check for updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      upstream_changed: ${{ !contains(fromJSON('["ahead", "identical"]'), steps.upstream.outputs.status) }}
+
+    steps:
+      - name: Check default branch
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          echo "::error::Run from the default branch ($DEFAULT_BRANCH), not $REF_NAME."
+          exit 1
+
+      - name: Check upstream
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          tip=$(git ls-remote "$UPSTREAM_URL" "refs/heads/$UPSTREAM_BRANCH" | cut -f1)
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$tip...$REF_NAME" --jq .status || echo unknown)
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Report up to date
+        if: contains(fromJSON('["ahead", "identical"]'), steps.upstream.outputs.status)
+        run: |
+          echo "::notice::Already up to date; nothing to sync."
+          echo "Already up to date; nothing to sync." >> "$GITHUB_STEP_SUMMARY"
+
+  sync:
+    name: Rebase onto upstream
+    needs: check
+    if: needs.check.outputs.upstream_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        id: upstream
+        run: |
+          git remote add -t "$UPSTREAM_BRANCH" upstream "$UPSTREAM_URL"
+          git fetch --filter=tree:0 --no-tags upstream
+          echo "base=refs/remotes/upstream/$UPSTREAM_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "old_head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Rebase onto upstream
+        id: rebase
+        continue-on-error: true
+        env:
+          BASE: ${{ steps.upstream.outputs.base }}
+        run: git rebase "$BASE"
+
+      - name: Report rebase conflicts
+        if: steps.rebase.outcome == 'failure'
+        run: |
+          echo "::error::Rebase onto $UPSTREAM_BRANCH hit conflicts; resolve them manually."
+          echo "::group::Conflicting files"
+          git diff --name-only --diff-filter=U
+          echo "::endgroup::"
+          git rebase --abort
+          exit 1
+
+      - name: Summary
+        if: always() && steps.upstream.outcome == 'success'
+        env:
+          BASE: ${{ steps.upstream.outputs.base }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### Sync result: $JOB_STATUS"
+            echo "- Upstream \`$UPSTREAM_BRANCH\`: \`$(git rev-parse --short "$BASE")\`"
+            echo "- Commits ahead of upstream: $(git rev-list --count "$BASE..HEAD")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          OLD_HEAD: ${{ steps.upstream.outputs.old_head }}
+        run: |
+          git push --force-with-lease="$REF_NAME:$OLD_HEAD" origin "HEAD:refs/heads/$REF_NAME"
+          echo "- Pushed \`${OLD_HEAD:0:9}\` -> \`$(git rev-parse --short=9 HEAD)\`" >> "$GITHUB_STEP_SUMMARY"
