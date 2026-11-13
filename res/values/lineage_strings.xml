@@ -51,6 +51,12 @@
     <string name="pref_sleep_gesture_title">Double tap to sleep</string>
     <string name="pref_sleep_gesture_summary">Double tap empty space on home screen to turn off the screen</string>
 
+    <!-- Hidden apps drawer -->
+    <string name="pref_hidden_drawer_gesture_title">Pinch out to open hidden apps</string>
+    <string name="pref_hidden_drawer_gesture_summary">Quickly spread two fingers wide on the home screen to open the hidden apps list</string>
+    <string name="hidden_apps_drawer_title">Hidden apps</string>
+    <string name="hidden_apps_drawer_empty">No hidden apps. Hide apps from Hidden &amp; Protected apps in settings.</string>
+
     <!-- Trust apps -->
     <string name="trust_apps_manager_name">Hidden &amp; Protected apps</string>
     <string name="trust_apps_auth_manager">Unlock to manage the hidden and protected apps</string>
